@@ -19,11 +19,15 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# data files
-# Data content
+# Data content. Zoom names chat exports "<stem>_RecordingnewChat.txt" with an
+# underscore, and occasionally "<stem>.cutfile.<digits>newChat.txt", so the
+# pattern has to end at "newChat.txt" rather than assume a leading dot.
 data/raw/**/*.vtt
-data/raw/**/*.txt
+data/raw/**/*.md
+data/raw/**/*newChat.txt
+data/raw/**/fetch-manifest.tsv
 data/processed/**/*.json
+data/curated/**/*.json
 
 # Ingestion registry
 data/ingestion_registry.json
@@ -34,4 +38,4 @@ data/ingestion_registry.json
 
 # Logs
 *.log
-``
+
