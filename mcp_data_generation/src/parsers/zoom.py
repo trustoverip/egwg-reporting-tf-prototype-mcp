@@ -19,8 +19,15 @@ def process(file_path: Path) -> Document:
 
     if file_path.suffix.lower() == ".vtt":
         content = _extract_vtt_text(raw_content)
+    elif content_type == "AI Summary":
+        content = _strip_summary_front_matter(raw_content)
     else:
         content = raw_content
+
+    if not content.strip():
+        # e.g. a summary record LFX created with no overview or next steps
+        print(f"Skipping empty {content_type}: {file_path.name}")
+        return None
 
     metadata = _load_metadata(file_path)
 
@@ -37,7 +44,7 @@ def process(file_path: Path) -> Document:
 def _is_zoom_export_file(file_path: Path) -> bool:
     return bool(
         re.match(
-            r"^GMT\d{8}-\d{6}_Recording.*\.(txt|vtt)$",
+            r"^GMT\d{8}-\d{6}_Recording.*\.(txt|vtt|md)$",
             file_path.name,
             re.IGNORECASE,
         )
@@ -48,6 +55,13 @@ def _get_content_type(file_path: Path) -> str | None:
         return None
 
     file_name = file_path.name.lower()
+    if file_name.endswith(".summary.md"):
+        return "AI Summary"
+
+    if file_name.endswith(".md"):
+        # Some other markdown that happens to sit beside the exports.
+        return None
+
     if file_name.endswith(".txt"):
         return "Chat"
 
@@ -71,6 +85,37 @@ def _extract_date(file_path: Path) -> datetime:
 def _read_file(file_path: Path) -> str:
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+_SUMMARY_META_LINE = re.compile(r"^- \*\*[^*]+:\*\*")
+
+
+def _strip_summary_front_matter(content: str) -> str:
+    """Drop the generated H1 and the meeting-metadata bullets.
+
+    Title, date and meeting id are already fields on the document, so repeating
+    them in the embedded text only adds noise — and the Zoom UUID and duration
+    are pure noise for retrieval. What is left is the prose: agenda, overview,
+    details and next steps.
+    """
+
+    lines = content.splitlines()
+    index = 0
+
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+
+    if index < len(lines) and lines[index].startswith("# "):
+        index += 1
+
+    # Blank lines and "- **Key:** value" bullets, up to the first real content.
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped and not _SUMMARY_META_LINE.match(stripped):
+            break
+        index += 1
+
+    return "\n".join(lines[index:]).strip()
 
 
 def _extract_vtt_text(content: str) -> str:
