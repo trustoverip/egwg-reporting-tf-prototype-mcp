@@ -1,0 +1,45 @@
+# A document's identifier is a SAID over the curated document, so anything that
+# re-dates unchanged content invalidates every index built from it. This runs
+# the checks that hold that line, against generated fixtures: no network, no
+# credentials and no clone of the 227 MB raw cache.
+
+name: Document identity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    name: Known and unknown content
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: mcp_data_generation
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mcp_data_generation/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check that every module imports
+        run: python -m compileall -q src tests
+
+      - name: Run the identity checks
+        run: python -m unittest discover --start-directory tests --top-level-directory . --verbose
