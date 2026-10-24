@@ -1,0 +1,59 @@
+# Weekly, with a week of cooldown so an upstream regression has time to surface
+# before a bump lands here. Each ecosystem splits its pull requests two ways,
+# security from version, so a fix is never queued behind a routine upgrade.
+
+version: 2
+
+updates:
+  # The workflows under .github. Every "uses:" is pinned to a 40-character
+  # commit SHA with a trailing version comment, and Dependabot updates the SHA
+  # and the comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      github-actions-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  # The MCP server: embedding, the vector index and the search tools.
+  - package-ecosystem: npm
+    directory: /toip-mcp-server
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      npm-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  # Data generation: the parsers, the ingestion engine and curation.
+  - package-ecosystem: pip
+    directory: /mcp_data_generation
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      pip-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      pip-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
