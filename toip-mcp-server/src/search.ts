@@ -22,7 +22,7 @@
  * the cosine score looks.
  */
 
-import type { LocalIndex } from 'vectra'
+import type { LocalIndex, MetadataFilter } from 'vectra'
 import { embed } from './embed.js'
 
 /** Rank-fusion constant. 60 is the value from the original RRF paper. */
@@ -69,7 +69,7 @@ export interface SearchResult {
 }
 
 export interface SearchOptions {
-  /** Substring match against organizational_unit. */
+  /** Case-insensitive substring match against any organizational_unit entry. */
   filterWg?: string
   /** Keep every matching chunk instead of the best one per document. */
   allChunks?: boolean
@@ -122,15 +122,65 @@ function termCounts(text: string): Map<string, number> {
   return counts
 }
 
-function matchesWg(metadata: Record<string, unknown>, filterWg: string): boolean {
-  let units: string[] = []
+/**
+ * The working groups a chunk belongs to. Vectra metadata holds only scalars,
+ * so ingest stores the array as a JSON string.
+ */
+export function organizationalUnits(metadata: Record<string, unknown>): string[] {
   try {
-    units = JSON.parse((metadata.organizational_unit as string) ?? '[]')
+    const units: unknown = JSON.parse((metadata.organizational_unit as string) ?? '[]')
+    return Array.isArray(units) ? units.map(String) : []
   } catch {
-    return false
+    return []
   }
+}
+
+export function matchesWg(units: string[], filterWg: string): boolean {
   const needle = filterWg.toLowerCase()
   return units.some((unit) => unit.toLowerCase().includes(needle))
+}
+
+/**
+ * Every distinct serialized organizational_unit value in the index.
+ *
+ * Cached per index instance. Vectra reads the index file once and keeps it in
+ * memory for the life of the LocalIndex, so this cannot go staler than the
+ * items it describes: a reingest needs a server restart either way.
+ */
+const unitValues = new WeakMap<LocalIndex, Promise<string[]>>()
+
+function distinctUnitValues(index: LocalIndex): Promise<string[]> {
+  let cached = unitValues.get(index)
+  if (!cached) {
+    cached = index.listItems().then((items) => {
+      const values = new Set<string>()
+      for (const item of items) {
+        const raw = item.metadata.organizational_unit
+        if (typeof raw === 'string') values.add(raw)
+      }
+      return [...values]
+    })
+    unitValues.set(index, cached)
+  }
+  return cached
+}
+
+/**
+ * A vectra metadata filter for a working-group substring, or null when no
+ * indexed value matches.
+ *
+ * Vectra applies a filter to every item *before* ranking, so a filtered query
+ * ranks the whole working group rather than whatever survived of a global top
+ * N. But its operators are equality only ($eq, $in, ...): no substring, and no
+ * array membership, because metadata cannot hold arrays. So the substring is
+ * resolved here against the distinct serialized values, and the exact ones
+ * that match are handed to vectra as an $in list.
+ */
+async function wgFilter(index: LocalIndex, filterWg: string): Promise<MetadataFilter | null> {
+  const matching = (await distinctUnitValues(index)).filter((value) =>
+    matchesWg(organizationalUnits({ organizational_unit: value }), filterWg)
+  )
+  return matching.length > 0 ? { organizational_unit: { $in: matching } } : null
 }
 
 export async function search(
@@ -142,13 +192,19 @@ export async function search(
   const terms = queryTerms(query)
   const depth = Math.max(MIN_CANDIDATES, limit * CANDIDATE_FACTOR)
 
-  const raw = await index.queryItems(await embed(query), query, depth)
+  // The working-group filter runs inside the vector query, not on its output.
+  // Filtering the top N afterwards left a small task force with nothing when
+  // its chunks never made the global top N, however well they matched.
+  let filter: MetadataFilter | undefined
+  if (options.filterWg) {
+    const resolved = await wgFilter(index, options.filterWg)
+    if (resolved === null) {
+      return { hits: [], query_terms: terms, candidates: 0 }
+    }
+    filter = resolved
+  }
 
-  // Filter before truncating, so a working-group filter narrows the candidate
-  // pool rather than discarding results that already won.
-  const candidates = options.filterWg
-    ? raw.filter((r) => matchesWg(r.item.metadata as Record<string, unknown>, options.filterWg!))
-    : raw
+  const candidates = await index.queryItems(await embed(query), query, depth, filter)
 
   if (candidates.length === 0) {
     return { hits: [], query_terms: terms, candidates: 0 }

@@ -57,8 +57,10 @@ of the corpus and would prune documents that are still there.
 
 `--rebuild` is still there for starting clean.
 
-The full corpus is large — 4745 documents and roughly 34k chunks, about 45
-minutes on a laptop, producing a ~370 MB index. Try `--limit 20` first.
+The full corpus is large — 6766 documents at the last count (4663 from Zoom,
+2103 from Confluence), which is tens of thousands of chunks, the better part
+of an hour on a laptop, and an index of several hundred MB. Try `--limit 20`
+first.
 
 ## How search works
 
@@ -116,9 +118,12 @@ npm run query -- --wg "Ecosystem Governance" "reporting templates"
 | `--text N` | characters of chunk text to print, `0` for none (default 300) |
 | `--json` | raw result object instead of the summary |
 
-Unlike the earlier version, `--wg` filters the candidate pool *before* ranking,
-so it narrows results rather than discarding ones that already won. The MCP
-`search` tool behaves identically.
+`--wg` is applied inside the vector query, before ranking, so a small task
+force is ranked on its own chunks rather than on whatever survived of the
+global top 50. The match is a case-insensitive substring of any entry in
+`organizational_unit`; it is resolved against the distinct values in the index
+and passed to vectra as an exact-match list, because vectra's metadata filters
+have no substring operator. The MCP `search` tool behaves identically.
 
 ## Run
 
@@ -161,7 +166,13 @@ Or for development (no build step):
   date, WG, source, identifier, the component scores, and the query terms each
   passage contains. Optional `filter_wg` narrows by working group;
   `all_chunks` allows several chunks from one document.
-- **list_documents** — list all indexed documents with metadata.
+- **list_documents** — list indexed documents with metadata, newest first,
+  50 per page (`limit`, up to 500) with `offset` for paging. Optional
+  `filter_wg` (substring of the working group) and `content_type` (exact,
+  case-insensitive) narrow the list. The header reports how many documents
+  match and the offset of the next page. The corpus holds thousands of
+  documents, so an unfiltered listing is deliberately paged rather than
+  returned whole.
 
 ## Data schema
 

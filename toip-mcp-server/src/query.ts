@@ -90,15 +90,13 @@ if (result.hits.length === 0) {
 
 for (const [i, hit] of result.hits.entries()) {
   const m = hit.metadata as Record<string, string | number>
-  const shared = Number(m.shared_by ?? 1)
 
   console.log(
     `${i + 1}. ${m.title}  (${m.date})  [${m.project} / ${m.content_type}]`
   )
   console.log(
     `   fused=${hit.score.toFixed(4)}  vector=${hit.vector_score.toFixed(3)}` +
-      `  lexical=${hit.lexical_score.toFixed(3)}  chunk ${m.chunk_index}` +
-      (shared > 1 ? `  shared_by=${shared}` : '')
+      `  lexical=${hit.lexical_score.toFixed(3)}  chunk ${m.chunk_index}`
   )
   console.log(
     `   matched: ${hit.matched_terms.length ? hit.matched_terms.join(', ') : '(none)'}`
