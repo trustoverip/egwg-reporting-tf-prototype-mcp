@@ -10,7 +10,8 @@
     "dev": "tsx src/index.ts",
     "ingest": "tsx src/ingest.ts",
     "query": "tsx src/query.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "check-consistency": "tsx src/check-consistency.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

@@ -203,3 +203,22 @@ and `AGENTS.md`:
 The index carries only what a chunk needs for search and filtering. Title,
 project and source come from the curated document, so the index is not a
 source of truth for document metadata and can be rebuilt at any time.
+
+## Read-only consistency inspection
+
+Run `npm run check-consistency -- --data /path/to/curated --index /path/to/index`
+to examine the indexed chunks against the normalized-document directory.
+Without options, the tool uses the same default directories as ingestion and
+respects `TOIP_DATA_DIR`. It does not compute embeddings, mutate the index,
+prune entries, or claim to authenticate source files.
+
+The JSON report distinguishes missing parents, duplicate chunk IDs, invalid
+chunk metadata, malformed curated documents, duplicate document identifiers,
+and normalized documents without indexed chunks. Findings produce exit code 1;
+inaccessible index/input produces exit code 2; no findings produces exit code 0.
+
+A normalized document lacking indexed chunks may simply be awaiting ingestion,
+or contain no searchable content. An orphan may arise after a revised SAID
+before `--prune` is performed. These are operational observations, not
+automatic repair instructions. The tool checks *structural* correspondence,
+not SAID cryptographic verification, Raw Artifact authenticity or permissions.
