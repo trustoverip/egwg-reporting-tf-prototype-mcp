@@ -1,0 +1,10 @@
+[
+  {
+    "id": "synthetic-provenance",
+    "query": "Where was the provenance rule agreed?",
+    "expected_document_ids": [
+      "synthetic-meeting-2"
+    ],
+    "rationale": "Synthetic evaluator fixture, not ToIP evidence."
+  }
+]
