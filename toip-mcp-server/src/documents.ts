@@ -2,7 +2,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { isNormalizedDocument } from './chunks.js'
-import type { NormalizedDocument, SearchResult } from './types.js'
+import type { NormalizedDocument, SearchResolution } from './types.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -72,8 +72,21 @@ export function toSearchResult(
   metadata: Record<string, unknown>,
   score: number,
   doc: DocumentHeader | undefined
-): SearchResult {
-  return {
+): SearchResolution {
+  const documentId = String(metadata.document_id ?? '')
+  const chunkId = String(metadata.chunk_id ?? '')
+  if (!doc) {
+    return { status: 'unresolved', reason: 'missing_document', document_id: documentId, chunk_id: chunkId }
+  }
+  if (doc.identifier !== documentId) {
+    return {
+      status: 'unresolved',
+      reason: 'document_identifier_mismatch',
+      document_id: documentId,
+      chunk_id: chunkId,
+    }
+  }
+  return { status: 'resolved', result: {
     schema_version: 1,
     score,
     chunk_id: String(metadata.chunk_id ?? ''),
@@ -89,5 +102,5 @@ export function toSearchResult(
     },
     content_type: String(metadata.content_type ?? ''),
     text: String(metadata.text ?? ''),
-  }
+  } }
 }

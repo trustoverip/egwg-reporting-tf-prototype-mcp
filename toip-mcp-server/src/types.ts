@@ -49,3 +49,16 @@ export interface SearchResult {
   content_type: string
   text: string
 }
+
+/**
+ * A retrieval-time join may fail even when vector search found a chunk.
+ * Only a resolved result may be presented as provenance-backed evidence.
+ */
+export type SearchResolution =
+  | { status: 'resolved'; result: SearchResult }
+  | {
+      status: 'unresolved'
+      reason: 'missing_document' | 'document_identifier_mismatch'
+      document_id: string
+      chunk_id: string
+    }

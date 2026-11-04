@@ -125,6 +125,13 @@ global top 50. The match is a case-insensitive substring of any entry in
 and passed to vectra as an exact-match list, because vectra's metadata filters
 have no substring operator. The MCP `search` tool behaves identically.
 
+**CLI integrity status.** `npm run query -- --json "query"` prints structured
+`results` and `unresolved` entries. Both JSON and text modes exit with status 1
+when indexed hits exist but none resolves to a parent document. A genuinely
+empty search exits 0; mixed resolved/unresolved searches exit 0 while reporting
+withheld hits. The MCP `search` header counts only returned, resolved hits and
+reports withheld joins separately.
+
 ## Run
 
 ```bash
@@ -203,3 +210,23 @@ and `AGENTS.md`:
 The index carries only what a chunk needs for search and filtering. Title,
 project and source come from the curated document, so the index is not a
 source of truth for document metadata and can be rebuilt at any time.
+
+## Retrieval integrity when a parent document is unavailable
+
+The search index is derived. A vector hit is not, by itself, a
+provenance-resolved document. Retrieval joins each hit's `document_id`
+to the curated document store. If the parent is absent or has a different
+identifier, that hit is **withheld**, not presented with blank source fields.
+
+The MCP `search` response explicitly reports the count and reason for
+unresolved joins, even when other hits can be returned. If every hit is
+unresolved, the response has `isError: true` instead of implying an
+ordinary no-results search. This does not automatically alter the index:
+run a full ingest and review stale documents; `--prune` is an explicit
+maintenance operation. A missing source URL alone does not invalidate a
+resolved document because a source URL is not mandatory.
+
+This checks the document join, **not** Raw Artifact integrity or the
+authenticity of source material. Raw Artifact joins are not implemented yet.
+This behavior is intentionally scoped to the normalized handoff proposed in
+PR #22; see issues #8 and #12.
