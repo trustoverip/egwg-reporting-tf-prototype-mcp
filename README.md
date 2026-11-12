@@ -1,211 +1,121 @@
 # MCP Knowledge Retrieval Platform
 
-## Overview
+A prototype for retrieving organizational knowledge through the Model Context Protocol (MCP), with explicit links from search results to the documents from which they were derived. It acquires source material, normalizes documents, generates searchable chunks and embeddings, and exposes retrieval through a local MCP server.
 
-This project provides a framework for collecting, normalizing, indexing, and retrieving organizational knowledge from multiple source systems.
+**Current focus:** Zoom meeting material and Confluence pages, verifiable Normalized Document identity, traceable retrieval, and reproducible evaluation. The project is under active development. A working retrieval path is not, by itself, proof of source authenticity, completeness, retrieval quality, or production readiness.
 
-Content is collected in its original format, transformed into a common document model, assigned a SAID, indexed for semantic search, and exposed through an MCP server.
+## What is available today
 
-Supported and planned sources include:
+| Area | Implemented in the current `main` | Important qualification |
+| --- | --- | --- |
+| Source handling | Zoom transcripts, captions, chat and AI summaries; Confluence export parsing | GitHub and YouTube are architectural targets, not completed ingestion integrations. |
+| Normalization | Source-specific parsing, curation, provenance fields and self-addressed Normalized Documents (SAIDs) | The authoritative Raw Artifact and provenance contracts are still being refined in [#8](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/8). |
+| Indexing | Local chunking, `fastembed` embeddings, vector index, incremental ingestion and explicit pruning/rebuild options | The index is derived and rebuildable. Updates and pruning must be coordinated with source and curation changes. |
+| Retrieval | Local MCP `search` and `list_documents` tools; CLI query path | Search combines semantic and keyword ranking. The server joins indexed chunks to curated documents at retrieval time. |
+| Tests | Python document-identity and normalization tests; TypeScript handoff tests; CI document-identity workflow | Component checks are not an end-to-end acceptance result or an independent real-corpus relevance assessment. |
 
-- Zoom
-- Confluence
-- GitHub
-- YouTube
+**Scope:** The implementation supports current-state retrieval. It does not provide historical as-of or bitemporal queries. Temporal identity, observation history and retention limitations are being assessed in [PR #29](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/29), which is proposed work rather than a merged capability.
 
----
+## How it fits together
 
-## Architecture
+The [repository architecture and workstream boundaries](AGENTS.md) govern the data models and their ownership. In particular, retrieval does not make the index authoritative for provenance.
 
 ```text
-Source Systems
+Source systems (Zoom, Confluence)
     ↓
-Content Acquisition
+Content Acquisition        → raw source files / proposed Raw Artifact record
     ↓
-Knowledge Normalization
+Knowledge Normalization    → SAID-bearing Normalized Document
     ↓
-Knowledge Indexing
+Knowledge Indexing         → Embedded Chunk → rebuildable vector index
     ↓
-MCP Retrieval Layer
-```
-
-The platform is organized around architectural workstreams rather than repository structure.
-
-For detailed architecture, data models, ownership boundaries, and contributor guidance, see:
-
-```text
-AGENTS.md
-```
-
----
-
-## Knowledge Lifecycle
-
-```text
-Raw Artifact
+MCP Retrieval Layer        → Search Result, joined to curated metadata
     ↓
-Normalized Document
-    ↓
-Embedded Chunk
-    ↓
-Vector Index Entry
-
-Search Result
-    ↑
-Retrieval-time join
+MCP client or local CLI
 ```
 
----
+The primary components are:
 
-## Major Workstreams
+| Path | Responsibility | Start here |
+| --- | --- | --- |
+| [`mcp_data_generation/`](mcp_data_generation/) | Source parsing, ingestion registry, curation, SAID generation and identity tests | [Data generation guide](mcp_data_generation/README.md) |
+| [`toip-mcp-server/`](toip-mcp-server/) | Chunking, local embeddings/index, hybrid search, CLI and MCP tools | [MCP server guide](toip-mcp-server/README.md) |
+| [`scripts/`](scripts/) | Source acquisition utilities | [Acquisition instructions](mcp_data_generation/README.md#step-1-collect-raw-data) |
+| [`AGENTS.md`](AGENTS.md) | Architectural workstreams, data-model ownership and source-of-truth rules | [Architecture and contributor guidance](AGENTS.md) |
 
-### Content Acquisition
+**Identity and evidence boundaries.** A Normalized Document SAID identifies an exact serialized record, including its provenance metadata; it does not identify a meeting or wiki page independently of revisions. Source-reference fields and content hashes help trace records, but do not independently establish the authenticity or authority of the source. An index hit is not a verified historical assertion.
 
-Collect and preserve content from source systems.
+## Try the local pipeline
 
-Examples:
+The workflow expects source material in the layout described by the [data generation guide](mcp_data_generation/README.md). The full source corpus is **not** committed to this repository. The documented read-only source cache is [LFDT-way/mcp-cache](https://github.com/LFDT-way/mcp-cache); use only data you are authorized to access and process. An existing local raw tree can be selected with `--raw`.
 
-- Zoom
-- Confluence
-- GitHub
-- YouTube
-- Future content sources
+Requirements: Python 3, Node.js and npm. The first embedding operation downloads a model; after installation, embeddings run locally. The documented commands below use the default `mcp_data_generation/data/raw` input and default output directories, so prepare the raw input or consult the guide for alternate paths.
 
-Output:
+From the repository root:
 
-```text
-Raw Artifact
+```bash
+cd mcp_data_generation
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -m src.ingestion_engine
+./.venv/bin/python -m src.curate
+
+cd ../toip-mcp-server
+npm ci
+npm run build
+npm run ingest -- --limit 20
+npm run query -- "bite size trust scripts"
 ```
 
-### Knowledge Normalization
+This is a **small trial**, not a complete corpus build. The indexer resumes from existing records; `--limit` bounds documents newly indexed, and a trial with `--limit` must not be combined with `--prune`. The server and the CLI must be pointed to the **same curated directory** as the indexer. To start the stdio MCP server after building and indexing:
 
-Transform source-specific content into a canonical representation.
-
-Examples:
-
-- Source parsers
-- Metadata inheritance
-- Validation
-- SAID generation
-
-Output:
-
-```text
-Normalized Document
+```bash
+npm start
 ```
 
-### Knowledge Indexing
+For a custom curated directory, set `TOIP_DATA_DIR` for retrieval as well as selecting `--data` during ingestion. The [server guide](toip-mcp-server/README.md) documents complete ingestion, `--prune`, `--rebuild`, MCP client configuration, and search options. **Do not run destructive index rebuild or pruning commands against an existing corpus without understanding their effects.**
 
-Prepare normalized knowledge for semantic retrieval.
+### MCP tools
 
-Examples:
+- **`search`** returns ranked passages with matching-term information and document/source references; it supports working-group filtering and an `all_chunks` option. Ranking is evidence of retrieval similarity, not source credibility or answer correctness.
+- **`list_documents`** pages through indexed documents, optionally filtering by working group or content type.
 
-- Chunking
-- Embeddings
-- Vector index creation
+The CLI uses the same search implementation and provides a `--json` output option for inspecting retrieval results. See [search behavior and command flags](toip-mcp-server/README.md#how-search-works).
 
-Output:
+## Test and interpret the results
 
-```text
-Embedded Chunk
-Vector Index Entry
+Run the existing tests from their component directories:
+
+```bash
+cd mcp_data_generation
+./.venv/bin/python -m unittest discover --start-directory tests --top-level-directory . --verbose
+
+cd ../toip-mcp-server
+npm test
+npm run build
 ```
 
-### MCP Retrieval Layer
+The [Document identity workflow](.github/workflows/document-identity.yml) runs the Python checks in CI with generated fixtures; the TypeScript handoff tests are available via `npm test`. These checks cover declared invariants, not an independently adjudicated assessment of real-world retrieval.
 
-Expose indexed knowledge through MCP tools.
+[Issue #26](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/26) tracks reproducible end-to-end validation: a pinned baseline, source-diverse corpus, real MCP client calls, failure cases and an evidence-backed disposition. Independent synthetic testing has identified unresolved provenance and lifecycle defects. **A green component or synthetic test run must not be read as a production-assurance PASS.** Approved real-source relevance evaluation and independent acceptance remain separate requirements.
 
-Examples:
+## Current priorities and how to contribute
 
-- Search
-- Metadata filtering
-- Document discovery
+The workstream issues organize implementation responsibility. They should be read with [`AGENTS.md`](AGENTS.md), rather than treating the directory layout as the architecture:
 
-Output:
+| Workstream | Open coordination |
+| --- | --- |
+| Cross-workstream data models and provenance | [#8](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/8) |
+| Content Acquisition | [#9](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/9) |
+| Knowledge Normalization | [#10](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/10) |
+| Knowledge Indexing | [#11](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/11) |
+| MCP Retrieval Layer | [#12](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/12) |
+| Testing & Evaluation | [#26](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/26) |
 
-```text
-Search Result
-```
+Immediate work emphasizes **verifying the implemented end-to-end path and resolving demonstrated integrity gaps**, before expanding the schema or adding new source integrations. Related open proposals include [retrieval evaluation (#23)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/23), [missing-parent retrieval behavior (#24)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/24), [index diagnostics (#25)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/25) and [malformed JSON ingestion (#28)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/28). These are **PRs under review**, not functionality presumed present in `main`.
 
-### Testing & Evaluation
+Before contributing, identify the owning workstream and affected model, reproduce the behavior on a pinned revision, and propose the smallest testable correction. Keep raw evidence, normalization, indexing and MCP response responsibilities separate. Follow repository DCO/CLA checks and do not include sensitive source material or credentials in fixtures, commits or CI artifacts.
 
-Validate retrieval quality and system behavior.
+## License
 
-Examples:
-
-- Retrieval testing
-- Regression testing
-- Benchmark datasets
-
----
-
-## Repository Components
-
-### mcp_data_generation
-
-Responsible for knowledge normalization.
-
-Examples:
-
-- Parsing
-- Validation
-- Metadata inheritance
-- SAID generation
-
-Produces:
-
-```text
-Normalized Documents
-```
-
-### toip-mcp-server
-
-Responsible for knowledge indexing and retrieval.
-
-Examples:
-
-- Chunking
-- Embeddings
-- Vector indexing
-- MCP tools
-
-Produces:
-
-```text
-Vector Index
-MCP Search Tools
-```
-
-### Testing Utilities
-
-Support validation, retrieval testing, and benchmarking.
-
----
-
-## Design Principles
-
-- Preserve raw content as the system of record.
-- Normalize source content into a canonical representation.
-- Maintain clear boundaries between workstreams.
-- Treat vector indexes as rebuildable derived artifacts.
-- Expose knowledge through retrieval rather than direct source access.
-
----
-
-## Contributor Guidance
-
-Contributors should review:
-
-```text
-AGENTS.md
-```
-
-before making architectural, data model, indexing, or retrieval changes.
-
-AGENTS.md contains:
-
-- Workstream definitions
-- Data model definitions
-- Ownership boundaries
-- Architectural principles
-- Contribution guidance
+See [LICENSE](LICENSE).
