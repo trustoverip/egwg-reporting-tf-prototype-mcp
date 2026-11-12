@@ -47,7 +47,9 @@ old version is left behind, just like a document removed from curation. A full
 run reports how many indexed documents are no longer in the curated directory;
 `--prune` deletes them. `--prune` refuses to run with `--limit`, because a
 limited run never sees the rest of the corpus and would prune documents that
-are still there.
+are still there. For the same reason it refuses to prune when any curated file
+could not be read or is not a valid Normalized Document; those files are
+skipped with a warning.
 
 `--rebuild` deletes the index and starts clean.
 
