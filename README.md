@@ -20,19 +20,22 @@ A prototype for retrieving organizational knowledge through the Model Context Pr
 
 The [repository architecture and workstream boundaries](AGENTS.md) govern the data models and their ownership. In particular, retrieval does not make the index authoritative for provenance.
 
-```text
-Source systems (Zoom, Confluence)
-    ↓
-Content Acquisition        → raw source files / proposed Raw Artifact record
-    ↓
-Knowledge Normalization    → SAID-bearing Normalized Document
-    ↓
-Knowledge Indexing         → Embedded Chunk → rebuildable vector index
-    ↓
-MCP Retrieval Layer        → Search Result, joined to curated metadata
-    ↓
-MCP client or local CLI
+```mermaid
+flowchart TD
+    S["Source systems<br/>Zoom and Confluence"]
+    A["Content Acquisition<br/>Collected source files"]
+    N["Knowledge Normalization<br/>SAID-bearing Normalized Documents"]
+    C["Knowledge Indexing<br/>Embedded Chunks"]
+    V[("Rebuildable vector index")]
+    R["MCP Retrieval Layer"]
+    O["Search Results"]
+    U["MCP client or local CLI"]
+
+    S --> A --> N --> C --> V --> R --> O --> U
+    N -. "Resolve document metadata and provenance" .-> R
 ```
+
+**Architecture boundary:** Content Acquisition owns source evidence; the Raw Artifact data model remains under discussion in [#8](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/8). The vector index is a derived retrieval structure, not the authority for document metadata or provenance. The dashed path represents the retrieval-time document lookup, not a second source of truth.
 
 The primary components are:
 
@@ -46,6 +49,28 @@ The primary components are:
 **Identity and evidence boundaries.** A Normalized Document SAID identifies an exact serialized record, including its provenance metadata; it does not identify a meeting or wiki page independently of revisions. Source-reference fields and content hashes help trace records, but do not independently establish the authenticity or authority of the source. An index hit is not a verified historical assertion.
 
 ## Try the local pipeline
+
+The operational path below distinguishes **creating an index** from **using it to retrieve results**. The MCP server and CLI read indexed chunks and resolve document metadata from the curated directory at query time.
+
+```mermaid
+flowchart TD
+    RAW["Raw source files"]
+    ING["Ingestion engine"]
+    PROC["Processed documents"]
+    CUR["Curation and SAID generation"]
+    DOC["Curated Normalized Documents"]
+    IDX["Index ingestion<br/>Chunk and embed"]
+    VEC[("Local vector index")]
+    Q["MCP search or CLI query"]
+    JOIN["Retrieval-time document lookup"]
+    OUT["Search response"]
+
+    RAW --> ING --> PROC --> CUR --> DOC
+    DOC --> IDX --> VEC --> Q --> JOIN --> OUT
+    DOC -. "Resolve title, source and provenance" .-> JOIN
+```
+
+**Operational boundary:** This depicts the ordinary current-state path, not a formal document state machine, automatic supersession policy, or historical as-of retrieval. Source updates may require explicit curation and index pruning; see the [component guides](mcp_data_generation/README.md) for lifecycle commands.
 
 The workflow expects source material in the layout described by the [data generation guide](mcp_data_generation/README.md). The full source corpus is **not** committed to this repository. The documented read-only source cache is [LFDT-way/mcp-cache](https://github.com/LFDT-way/mcp-cache); use only data you are authorized to access and process. An existing local raw tree can be selected with `--raw`.
 
