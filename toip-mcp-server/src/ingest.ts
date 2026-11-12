@@ -19,7 +19,7 @@ const usage = `Usage: npm run ingest -- [options]
   --rebuild        delete the index and start over instead of resuming
 `
 
-interface Options {
+export interface Options {
   dataDir: string
   batchSize: number
   limit: number
@@ -136,7 +136,22 @@ export async function ingest(indexPath: string, options: Options) {
   for (const file of files) {
     if (done >= options.limit) break
 
-    const doc: unknown = JSON.parse(await fs.readFile(path.join(options.dataDir, file), 'utf-8'))
+    let raw: string
+    try {
+      raw = await fs.readFile(path.join(options.dataDir, file), 'utf-8')
+    } catch (error) {
+      console.warn(`  ! ${file} could not be read (${(error as NodeJS.ErrnoException).code ?? error}), skipping`)
+      invalid++
+      continue
+    }
+    let doc: unknown
+    try {
+      doc = JSON.parse(raw)
+    } catch (error) {
+      console.warn(`  ! ${file} is not valid JSON (${(error as Error).message}), skipping`)
+      invalid++
+      continue
+    }
     if (!isNormalizedDocument(doc)) {
       console.warn(`  ! ${file} is not a schema_version 1 Normalized Document, skipping`)
       invalid++
@@ -184,6 +199,14 @@ export async function ingest(indexPath: string, options: Options) {
   const stale = [...already.keys()].filter((id) => !present.has(id))
   let pruned = 0
 
+  if (options.prune && invalid > 0) {
+    throw new Error(
+      `--prune refused: ${invalid} file(s) in ${options.dataDir} could not be read or ` +
+        `are not valid Normalized Documents, so their documents would look removed. ` +
+        `Fix or remove them and run again.`
+    )
+  }
+
   if (options.prune && stale.length > 0) {
     await index.beginUpdate()
     try {
@@ -216,6 +239,8 @@ export async function ingest(indexPath: string, options: Options) {
   }
 }
 
-const options = parseArgs(process.argv.slice(2))
-const indexPath = path.join(__dirname, '..', '.index')
-await ingest(indexPath, options)
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const options = parseArgs(process.argv.slice(2))
+  const indexPath = path.join(__dirname, '..', '.index')
+  await ingest(indexPath, options)
+}
