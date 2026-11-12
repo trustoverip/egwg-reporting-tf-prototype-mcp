@@ -136,7 +136,14 @@ export async function ingest(indexPath: string, options: Options) {
   for (const file of files) {
     if (done >= options.limit) break
 
-    const doc: unknown = JSON.parse(await fs.readFile(path.join(options.dataDir, file), 'utf-8'))
+    let doc: unknown
+    try {
+      doc = JSON.parse(await fs.readFile(path.join(options.dataDir, file), 'utf-8'))
+    } catch (error) {
+      console.warn(`  ! ${file} is not valid JSON (${(error as Error).message}), skipping`)
+      invalid++
+      continue
+    }
     if (!isNormalizedDocument(doc)) {
       console.warn(`  ! ${file} is not a schema_version 1 Normalized Document, skipping`)
       invalid++
