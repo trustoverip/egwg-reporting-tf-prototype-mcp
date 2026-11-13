@@ -66,6 +66,7 @@ class CurrentRegistryCurationTests(CacheFixture):
         (self.processed / f"{said}.json").unlink()
         with self.assertRaisesRegex(SystemExit, "missing from the processed tree"):
             self.run_curate()
+        self.assertFalse(self.curated.exists())
 
     def test_unreferenced_processed_document_does_not_change_publication(self):
         self.run_curate()
@@ -76,3 +77,12 @@ class CurrentRegistryCurationTests(CacheFixture):
         )
         self.run_curate()
         self.assertEqual(self.curated_documents()[0], before)
+
+    def test_missing_registry_ingestion_time_cannot_be_forged_from_file_mtime(self):
+        registry = self.registry()
+        key = next(iter(registry))
+        registry[key].pop("processed_at")
+        self.registry_file.write_text(json.dumps(registry), encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "missing ingestion timestamp"):
+            self.run_curate()
+        self.assertFalse(self.curated.exists())

@@ -276,7 +276,9 @@ def _source_index(registry_file: Path) -> dict[str, tuple[str, str]]:
     for path_key, entry in registry.items():
         if not isinstance(entry, dict):
             raise ValueError(f"invalid ingestion registry entry: {path_key}")
-        processed_at = entry.get("processed_at", "")
+        processed_at = entry.get("processed_at")
+        if not isinstance(processed_at, str) or not processed_at.strip():
+            raise ValueError(f"missing ingestion timestamp for registry entry: {path_key}")
         file_hash = entry.get("file_hash", "")
         if not isinstance(file_hash, str) or re.fullmatch(r"[0-9a-f]{64}", file_hash) is None:
             raise ValueError(f"invalid file hash in ingestion registry: {path_key}")
@@ -394,9 +396,6 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         raise SystemExit(f"curation provenance unavailable: {exc}") from exc
 
-    if not args.dry_run:
-        curated_dir.mkdir(parents=True, exist_ok=True)
-
     print(f"processed {processed_dir}  (read-only)")
     print(f"curated   {curated_dir}")
     if args.dry_run:
@@ -420,6 +419,11 @@ def main(argv: list[str] | None = None) -> int:
             f"curation cannot publish: {len(missing)} registry document(s) "
             "are missing from the processed tree"
         )
+
+    # No output directory is created until registry and processed membership
+    # have passed the preflight checks.
+    if not args.dry_run:
+        curated_dir.mkdir(parents=True, exist_ok=True)
 
     owners: dict[str, tuple[str, str]] = {}
     if args.keep_boilerplate:
