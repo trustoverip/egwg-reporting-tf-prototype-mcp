@@ -56,9 +56,11 @@ class CurrentRegistryCurationTests(CacheFixture):
         self.assertEqual({p.name: p.read_bytes() for p in self.curated.glob("*.json")}, old)
 
     def test_malformed_registry_and_missing_registered_document_fail_closed(self):
+        valid_registry = self.registry_file.read_text(encoding="utf-8")
         self.registry_file.write_text("{", encoding="utf-8")
         with self.assertRaisesRegex(SystemExit, "curation provenance unavailable"):
             self.run_curate()
+        self.registry_file.write_text(valid_registry, encoding="utf-8")
         self.ingest("--force")
         (said,) = self.saids()
         (self.processed / f"{said}.json").unlink()
