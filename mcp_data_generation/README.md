@@ -376,6 +376,23 @@ carries the same information; where one exists its values win.
 
 ---
 
+### Current-source curation and registry integrity
+
+The ingestion registry identifies the current processed-document SAIDs for the
+source files. The `data/processed` directory is a cache: when ingestion runs
+without `--prune`, it may also retain superseded processed files. Curation
+filters these stale files **before** boilerplate detection and document
+selection, so a revision cannot silently lose to an earlier filename. If the
+registry is missing, corrupt, or claims a current processed document that is
+absent, curation aborts instead of inventing provenance or using a file
+modification time as collection evidence.
+
+The existing `--prune` options are still needed to remove stale curated files
+whose *human-readable filenames* have changed and to remove obsolete index
+entries. For a controlled refresh, run ingestion, curation, and then indexing
+with their documented `--prune` options against isolated or backed-up output.
+Curation does not delete arbitrary cached processed files.
+
 ## Step 2: Generate JSON documents
 
 ```bash
