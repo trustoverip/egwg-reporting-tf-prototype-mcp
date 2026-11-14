@@ -124,6 +124,10 @@ The [Document identity workflow](.github/workflows/document-identity.yml) runs t
 
 [Issue #26](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/26) tracks reproducible end-to-end validation: a pinned baseline, source-diverse corpus, real MCP client calls, failure cases and an evidence-backed disposition. Independent synthetic testing has identified unresolved provenance and lifecycle defects. **A green component or synthetic test run must not be read as a production-assurance PASS.** Approved real-source relevance evaluation and independent acceptance remain separate requirements.
 
+### Reproducible synthetic end-to-end assessment
+
+The [prototype validation runbook](docs/prototype-validation.md) provides an isolated Zoom/Confluence fixture, full Python and TypeScript checks, a real stdio MCP client probe, and adverse provenance tests. The workflow [`prototype-e2e.yml`](.github/workflows/prototype-e2e.yml) captures diagnostics; green execution does **not** turn recorded material failures into PASS. See [issue #26](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/26) for the unresolved real-corpus and human-adjudication requirement.
+
 ## Current priorities and how to contribute
 
 The workstream issues organize implementation responsibility. They should be read with [`AGENTS.md`](AGENTS.md), rather than treating the directory layout as the architecture:
@@ -137,7 +141,7 @@ The workstream issues organize implementation responsibility. They should be rea
 | MCP Retrieval Layer | [#12](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/12) |
 | Testing & Evaluation | [#26](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/26) |
 
-Immediate work emphasizes **verifying the implemented end-to-end path and resolving demonstrated integrity gaps**, before expanding the schema or adding new source integrations. Related open proposals include [retrieval evaluation (#23)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/23), [missing-parent retrieval behavior (#24)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/24), [index diagnostics (#25)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/25) and [malformed JSON ingestion (#28)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/28). These are **PRs under review**, not functionality presumed present in `main`.
+Immediate work emphasizes **verifying the implemented end-to-end path and resolving demonstrated integrity gaps**, before expanding the schema or adding new source integrations. Related open proposals include [retrieval evaluation (#23)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/23), [missing-parent retrieval behavior (#24)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/24), [index diagnostics (#25)](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/25) . The malformed JSON ingestion correction [#28](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/28) is already merged into `main`; #23–#25 remain **proposals under review**. The pinned validation control predates #28, so its results must not be mistaken for the updated runtime.
 
 Before contributing, identify the owning workstream and affected model, reproduce the behavior on a pinned revision, and propose the smallest testable correction. Keep raw evidence, normalization, indexing and MCP response responsibilities separate. Follow repository DCO/CLA checks and do not include sensitive source material or credentials in fixtures, commits or CI artifacts.
 

@@ -1,0 +1,91 @@
+# Synthetic consumer-path validation of the canonical acquisition-to-MCP handoff.
+# A green job establishes only these declared checks, not real-corpus relevance.
+name: Prototype end-to-end evidence
+
+on:
+  push:
+    branches:
+      - test/end-to-end-prototype-validation
+  pull_request:
+    paths:
+      - 'mcp_data_generation/**'
+      - 'toip-mcp-server/**'
+      - '.github/workflows/prototype-e2e.yml'
+      - 'docs/prototype-validation.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-prototype:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TOIP_DEMO_OUTPUT: ${{ github.workspace }}/.prototype-demo
+      TOIP_DATA_DIR: ${{ github.workspace }}/.prototype-demo/curated
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mcp_data_generation/requirements.txt
+      - name: Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: toip-mcp-server/package-lock.json
+      - name: Python dependencies and existing tests
+        working-directory: mcp_data_generation
+        run: |
+          python -m pip install -r requirements.txt
+          python -m compileall -q src tests
+          python -m unittest discover --start-directory tests --top-level-directory . --verbose
+      - name: Generate source-diverse corpus and verify identity and repeatability
+        working-directory: mcp_data_generation
+        run: python -m tests.prototype_demo --output "$TOIP_DEMO_OUTPUT"
+      - name: Reproduce normalization lifecycle failures in isolation
+        working-directory: mcp_data_generation
+        run: python -m tests.prototype_failures --output "$TOIP_DEMO_OUTPUT"
+      - name: TypeScript dependencies, contract tests and build
+        working-directory: toip-mcp-server
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Index synthetic corpus
+        working-directory: toip-mcp-server
+        run: npm run ingest -- --data "$TOIP_DEMO_OUTPUT/curated" --rebuild
+      - name: Repeated index ingestion
+        working-directory: toip-mcp-server
+        run: npm run ingest -- --data "$TOIP_DEMO_OUTPUT/curated"
+      - name: Validate CLI query output
+        working-directory: toip-mcp-server
+        run: |
+          node --import tsx src/query.ts --json "governance framework" > "$TOIP_DEMO_OUTPUT/query.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const result=JSON.parse(fs.readFileSync(process.env.TOIP_DEMO_OUTPUT+"/query.json","utf8"));
+            if (!Array.isArray(result.results)||!result.results.length||
+                !result.results.some(r => r.document_id?.startsWith("urn:said:E") && r.source?.system))
+              process.exit(1);
+          '
+      - name: Exercise actual MCP stdio client and adverse provenance
+        working-directory: toip-mcp-server
+        run: node test/prototype-client.mjs
+      - name: Upload sanitized synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prototype-e2e-evidence
+          path: |
+            .prototype-demo/manifest.json
+            .prototype-demo/mcp-client-report.json
+            .prototype-demo/normalization-failures.json
+            .prototype-demo/query.json
+          if-no-files-found: warn
+          retention-days: 14

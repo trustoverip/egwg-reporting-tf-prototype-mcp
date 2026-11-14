@@ -137,6 +137,16 @@ Search results join each chunk to its curated document for the title, project
 and source, so the server reads the same curated directory as ingest. Set
 `TOIP_DATA_DIR` if it is not `../mcp_data_generation/data/curated`.
 
+## Reproducible SDK client evaluation
+
+The [prototype validation runbook](../docs/prototype-validation.md) invokes
+an actual MCP SDK stdio client against a fully synthetic Zoom/Confluence
+corpus and records failure outcomes separately from successful test execution.
+The [prototype-e2e workflow](../.github/workflows/prototype-e2e.yml) runs the
+Python and TypeScript suites, build and consumer-path probe. This is a
+diagnostic synthetic baseline, **not** human-adjudicated real-source retrieval
+quality or independent assurance. See [issue #26](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/26).
+
 ## Test
 
 ```bash
