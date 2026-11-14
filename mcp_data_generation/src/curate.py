@@ -37,7 +37,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 from src.py_saidify import py_saidify_urn
@@ -299,8 +301,62 @@ def _source_index(registry_file: Path) -> dict[str, tuple[str, str]]:
     return sources
 
 
+def _artifact_membership(registry_file: Path, catalog_dir: Path) -> dict[str, list[str]]:
+    """Map processed document SAIDs to all *registered contributing* file digests.
+
+    This uses explicit ingestion relationships, never filename or meeting-ID
+    proximity. The catalog is required but does not authenticate a source.
+    """
+    if not registry_file.is_file():
+        raise ValueError(f"registry is unavailable: {registry_file}")
+    if not catalog_dir.is_dir():
+        raise ValueError(f"artifact catalog is unavailable: {catalog_dir}")
+    try:
+        registry = json.loads(registry_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("could not read artifact membership registry") from exc
+    if not isinstance(registry, dict):
+        raise ValueError("registry must be a JSON object")
+    membership: dict[str, set[str]] = {}
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"invalid registry entry: {key}")
+        processed_at = entry.get("processed_at")
+        if not isinstance(processed_at, str) or not processed_at.strip():
+            raise ValueError(f"missing ingestion timestamp for {key}")
+        digest = entry.get("file_hash")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError(f"missing/invalid source digest for {key}")
+        artifact_id = f"sha256:{digest}"
+        record_path = catalog_dir / f"{digest}.json"
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"artifact record missing or invalid for {key}") from exc
+        if not isinstance(record, dict):
+            raise ValueError(f"invalid artifact record for {key}")
+        if record.get("artifact_id") != artifact_id or record.get("schema_version") != 1:
+            raise ValueError(f"artifact identity mismatch for {key}")
+        observations = record.get("observations")
+        if not isinstance(observations, list) or not any(
+            isinstance(obs, dict) and obs.get("registry_path") == key
+            for obs in observations
+        ):
+            raise ValueError(f"source association not evidenced for {key}")
+        saids = entry.get("document_saids")
+        if not isinstance(saids, list):
+            legacy = entry.get("document_said")
+            saids = [legacy] if legacy else []
+        for said in saids:
+            if not isinstance(said, str) or not said:
+                raise ValueError(f"invalid processed document identifier for {key}")
+            membership.setdefault(said, set()).add(artifact_id)
+    return {said: sorted(ids) for said, ids in membership.items()}
+
+
 def curate_document(
-    document: dict, collected_at: str, artifact_id: str
+    document: dict, collected_at: str, artifact_id: str,
+    *, schema_version: int = 1, artifact_ids: list[str] | None = None
 ) -> tuple[str, dict]:
     """Return (urn, curated document) for one processed document.
 
@@ -308,8 +364,16 @@ def curate_document(
     dict, so a stable order keeps the SAID stable.
     """
 
+    if schema_version not in (1, 2):
+        raise ValueError("unsupported normalized schema version")
+    if schema_version == 2 and (not artifact_ids or not all(
+        isinstance(artifact, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact)
+        for artifact in artifact_ids
+    )):
+        raise ValueError("v2 requires evidenced, nonempty artifact identifiers")
+
     curated = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": schema_version,
         "identifier": "",
         "document": {
             "project": document.get("project", ""),
@@ -317,13 +381,17 @@ def curate_document(
             "title": document.get("title", ""),
             "date": document.get("date", ""),
         },
-        "provenance": {
-            "artifact_id": artifact_id,
-            "source_system": document.get("source_system", ""),
-            "source_identifier": document.get("source_identifier", ""),
-            "source_url": document.get("source_url", ""),
-            "collected_at": collected_at,
-        },
+        "provenance": (
+            {"artifact_ids": sorted(set(artifact_ids))}
+            if schema_version == 2
+            else {
+                "artifact_id": artifact_id,
+                "source_system": document.get("source_system", ""),
+                "source_identifier": document.get("source_identifier", ""),
+                "source_url": document.get("source_url", ""),
+                "collected_at": collected_at,
+            }
+        ),
         "content": {
             "content_type": document.get("content_type", ""),
             "text": document.get("content", ""),
@@ -357,6 +425,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="ingestion registry, read for collected_at and artifact_id",
     )
     parser.add_argument(
+        "--schema-version",
+        type=int, choices=(1, 2), default=1,
+        help="normalized document format (default: 1; v2 opt-in and requires artifact catalog)",
+    )
+    parser.add_argument(
+        "--artifact-catalog", type=Path,
+        help="verified acquisition catalog directory, required for schema v2",
+    )
+    parser.add_argument(
         "--prune",
         action="store_true",
         help="delete curated documents this run did not produce",
@@ -378,6 +455,92 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _curate_v2_fresh(
+    processed_dir: Path, curated_dir: Path, membership: dict[str, list[str]],
+    *, keep_boilerplate: bool, dry_run: bool, quiet: bool,
+) -> int:
+    """Validate every v2 input before publishing a new output directory.
+
+    Staging in a sibling directory makes missing or contradictory provenance
+    fail without leaving a partially published corpus. The existing v1
+    incremental path is deliberately untouched.
+    """
+    if curated_dir.exists():
+        raise SystemExit(
+            "schema v2 requires a fresh --curated directory; "
+            "choose a new destination for deterministic regeneration"
+        )
+    paths = [path for path in sorted(processed_dir.glob("*.json"))
+             if path.stem in membership]
+    stale = len(list(processed_dir.glob("*.json"))) - len(paths)
+    if stale:
+        warn(f"ignoring {stale} stale processed document(s) outside current registry membership")
+    missing = sorted(said for said in membership
+                     if not (processed_dir / f"{said}.json").is_file())
+    if missing:
+        raise SystemExit(
+            f"schema v2 cannot publish: {len(missing)} registry document(s) "
+            "are missing from the processed tree"
+        )
+    if not paths:
+        raise SystemExit("schema v2 refuses to publish an empty corpus")
+    owners = {} if keep_boilerplate else boilerplate_owners(_iter_documents(paths))
+    planned: dict[str, str] = {}
+    names: dict[str, str] = {}
+    for path in paths:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"schema v2 unreadable processed input: {path.name}") from exc
+        if not isinstance(document, dict):
+            raise SystemExit(f"schema v2 invalid processed input: {path.name}")
+        said = document.get("identifier")
+        if not isinstance(said, str) or not membership.get(said):
+            raise SystemExit(
+                f"schema v2 cannot establish contributing artifacts for {path.name}"
+            )
+        if owners:
+            content, removed, kept_whole = strip_boilerplate(document, owners)
+            if removed and not kept_whole:
+                document["content"] = content
+        try:
+            urn, curated = curate_document(
+                document, "", "", schema_version=2, artifact_ids=membership[said]
+            )
+            document_id = build_id(document)
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise SystemExit(f"schema v2 cannot normalize {path.name}: {exc}") from exc
+        if document_id in names:
+            raise SystemExit(
+                f"schema v2 duplicate document id {document_id}: "
+                f"{path.name} and {names[document_id]}"
+            )
+        names[document_id] = path.name
+        planned[f"{document_id}.json"] = (
+            json.dumps(curated, indent=2, ensure_ascii=False) + "\n"
+        )
+        if not quiet:
+            print(f"validate {document_id} -> {urn}")
+    if dry_run:
+        print(f"validated {len(planned)} v2 document(s); no files written")
+        return 0
+
+    curated_dir.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=".curated-v2-", dir=curated_dir.parent))
+    try:
+        for name, payload in planned.items():
+            (stage / name).write_text(payload, encoding="utf-8")
+        # Refuse an existing output even if it was created while staging.
+        if curated_dir.exists():
+            raise SystemExit("schema v2 output appeared during staging; refusing overwrite")
+        stage.rename(curated_dir)
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+    print(f"published {len(planned)} schema v2 document(s) to {curated_dir}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
@@ -391,6 +554,23 @@ def main(argv: list[str] | None = None) -> int:
     if curated_dir == processed_dir:
         raise SystemExit("--curated must differ from --processed")
 
+    if args.schema_version == 2:
+        if args.artifact_catalog is None:
+            raise SystemExit("schema v2 requires --artifact-catalog")
+        if args.prune:
+            raise SystemExit("schema v2 publishes a fresh directory; --prune is unsupported")
+        try:
+            membership = _artifact_membership(
+                registry_file, args.artifact_catalog.expanduser().resolve()
+            )
+        except ValueError as exc:
+            raise SystemExit(f"schema v2 source evidence unavailable: {exc}") from exc
+        return _curate_v2_fresh(
+            processed_dir, curated_dir, membership,
+            keep_boilerplate=args.keep_boilerplate,
+            dry_run=args.dry_run, quiet=args.quiet,
+        )
+
     try:
         sources = _source_index(registry_file)
     except ValueError as exc:
@@ -401,9 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print("dry-run: nothing will be written")
 
-    # Files in processed/ are a cache, not an authoritative current-source set.
-    # The registry describes current ingestion membership; superseded files
-    # can remain on disk when the ingestion engine is run without --prune.
+    # Processed files are cached outputs; registry membership selects current versions.
     paths: list[Path] = []
     stale = 0
     for path in sorted(processed_dir.glob("*.json")):
@@ -419,9 +597,6 @@ def main(argv: list[str] | None = None) -> int:
             f"curation cannot publish: {len(missing)} registry document(s) "
             "are missing from the processed tree"
         )
-
-    # No output directory is created until registry and processed membership
-    # have passed the preflight checks.
     if not args.dry_run:
         curated_dir.mkdir(parents=True, exist_ok=True)
 
@@ -464,10 +639,7 @@ def main(argv: list[str] | None = None) -> int:
                 document["content"] = content
 
         said = document.get("identifier", "")
-        recorded_stamp, artifact_id = sources.get(said, ("", ""))
-        stamp = recorded_stamp or datetime.fromtimestamp(
-            path.stat().st_mtime, timezone.utc
-        ).isoformat()
+        stamp, artifact_id = sources[said]
 
         urn, curated = curate_document(document, stamp, artifact_id)
         document_id = build_id(document)
