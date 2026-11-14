@@ -2,6 +2,7 @@ import { LocalIndex } from 'vectra'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { documentStore, toSearchResult } from './documents.js'
+import { summarizeResolutions } from './resolution-summary.js'
 import { search } from './search.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -75,36 +76,49 @@ if (!(await index.isIndexCreated())) {
 
 const result = await search(index, query, limit, { filterWg, allChunks })
 const documents = await documentStore()
-const results = result.hits.map((hit) => ({
-  ...toSearchResult(hit.metadata, hit.score, documents.get(hit.metadata.document_id as string)),
-  vector_score: hit.vector_score,
-  lexical_score: hit.lexical_score,
-  matched_terms: hit.matched_terms,
+const joined = result.hits.map((hit) => ({
+  resolution: toSearchResult(hit.metadata, hit.score, documents.get(hit.metadata.document_id as string)),
+  hit,
 }))
+const summary = summarizeResolutions(joined.map(({ resolution, hit }) => ({
+  resolution, matched_terms: hit.matched_terms,
+})))
+const unresolved = joined.flatMap(({ resolution }) =>
+  resolution.status === 'unresolved' ? [resolution] : []
+)
+const results = joined.flatMap(({ resolution, hit }) =>
+  resolution.status === 'resolved'
+    ? [{ ...resolution.result,
+         vector_score: hit.vector_score,
+         lexical_score: hit.lexical_score,
+         matched_terms: hit.matched_terms }]
+    : []
+)
 
 if (asJson) {
   console.log(
     JSON.stringify(
-      { query_terms: result.query_terms, candidates: result.candidates, results },
+      { query_terms: result.query_terms, candidates: result.candidates, results, unresolved },
       null,
       2
     )
   )
-  process.exit(0)
+  process.exit(summary.exitCode)
 }
 
 console.log(`query terms: ${result.query_terms.join(', ') || '(none)'}`)
 console.log(`candidates:  ${result.candidates}`)
+if (unresolved.length) console.error(`Retrieval integrity: ${unresolved.length} unresolved join(s) withheld.`)
 console.log('')
 
 if (results.length === 0) {
-  console.log('No results.')
-  process.exit(0)
+  console.log(unresolved.length ? 'No provenance-resolved results.' : 'No results.')
+  process.exit(summary.exitCode)
 }
 
 for (const [i, r] of results.entries()) {
   console.log(
-    `${i + 1}. ${r.title || '(document not found)'}  (${r.date})  [${r.project} / ${r.content_type}]`
+    `${i + 1}. ${r.title || '(untitled)'}  (${r.date})  [${r.project} / ${r.content_type}]`
   )
   console.log(
     `   fused=${r.score.toFixed(4)}  vector=${r.vector_score.toFixed(3)}` +
