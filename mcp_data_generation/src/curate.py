@@ -258,33 +258,40 @@ def _source_index(registry_file: Path) -> dict[str, tuple[str, str]]:
     so the choice does not depend on registry order.
     """
 
-    if not registry_file.exists():
-        return {}
+    if not registry_file.is_file():
+        raise ValueError(f"ingestion registry is required for provenance: {registry_file}")
 
     try:
         with open(registry_file, "r", encoding="utf-8") as f:
             registry = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        warn(f"could not read {registry_file}; falling back to file times")
-        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read ingestion registry: {registry_file}") from exc
+    if not isinstance(registry, dict):
+        raise ValueError("ingestion registry must contain a JSON object")
 
     # A file may yield several documents, so an entry records a list of SAIDs.
     # Entries written before that carry a single "document_said".
     sources: dict[str, tuple[str, str]] = {}
 
-    for entry in registry.values():
-        processed_at = entry.get("processed_at", "")
+    for path_key, entry in registry.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"invalid ingestion registry entry: {path_key}")
+        processed_at = entry.get("processed_at")
+        if not isinstance(processed_at, str) or not processed_at.strip():
+            raise ValueError(f"missing ingestion timestamp for registry entry: {path_key}")
         file_hash = entry.get("file_hash", "")
-        artifact_id = f"sha256:{file_hash}" if file_hash else ""
+        if not isinstance(file_hash, str) or re.fullmatch(r"[0-9a-f]{64}", file_hash) is None:
+            raise ValueError(f"invalid file hash in ingestion registry: {path_key}")
+        artifact_id = f"sha256:{file_hash}"
         saids = entry.get("document_saids")
 
         if not isinstance(saids, list):
             said = entry.get("document_said")
             saids = [said] if said else []
+        if not all(isinstance(said, str) and said for said in saids):
+            raise ValueError(f"invalid document references in ingestion registry: {path_key}")
 
         for said in saids:
-            if not said:
-                continue
             candidate = (processed_at, artifact_id)
             if said not in sources or candidate < sources[said]:
                 sources[said] = candidate
@@ -384,17 +391,39 @@ def main(argv: list[str] | None = None) -> int:
     if curated_dir == processed_dir:
         raise SystemExit("--curated must differ from --processed")
 
-    sources = _source_index(registry_file)
-
-    if not args.dry_run:
-        curated_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        sources = _source_index(registry_file)
+    except ValueError as exc:
+        raise SystemExit(f"curation provenance unavailable: {exc}") from exc
 
     print(f"processed {processed_dir}  (read-only)")
     print(f"curated   {curated_dir}")
     if args.dry_run:
         print("dry-run: nothing will be written")
 
-    paths = sorted(processed_dir.glob("*.json"))
+    # Files in processed/ are a cache, not an authoritative current-source set.
+    # The registry describes current ingestion membership; superseded files
+    # can remain on disk when the ingestion engine is run without --prune.
+    paths: list[Path] = []
+    stale = 0
+    for path in sorted(processed_dir.glob("*.json")):
+        if path.stem not in sources:
+            stale += 1
+            continue
+        paths.append(path)
+    if stale:
+        warn(f"ignoring {stale} processed document(s) no longer referenced by the ingestion registry")
+    missing = sorted(said for said in sources if not (processed_dir / f"{said}.json").is_file())
+    if missing:
+        raise SystemExit(
+            f"curation cannot publish: {len(missing)} registry document(s) "
+            "are missing from the processed tree"
+        )
+
+    # No output directory is created until registry and processed membership
+    # have passed the preflight checks.
+    if not args.dry_run:
+        curated_dir.mkdir(parents=True, exist_ok=True)
 
     owners: dict[str, tuple[str, str]] = {}
     if args.keep_boilerplate:

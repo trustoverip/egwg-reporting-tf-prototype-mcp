@@ -70,7 +70,7 @@ flowchart TD
     DOC -. "Resolve title, source and provenance" .-> JOIN
 ```
 
-**Operational boundary:** This depicts the ordinary current-state path, not a formal document state machine, automatic supersession policy, or historical as-of retrieval. Source updates may require explicit curation and index pruning; see the [component guides](mcp_data_generation/README.md) for lifecycle commands.
+**Operational boundary:** This depicts the ordinary current-state path, not a formal document state machine, automatic supersession policy, or historical as-of retrieval. Curation selects only registry-referenced processed records; source updates may still require explicit curation and index pruning; see the [component guides](mcp_data_generation/README.md) for lifecycle commands.
 
 The workflow expects source material in the layout described by the [data generation guide](mcp_data_generation/README.md). The full source corpus is **not** committed to this repository. The documented read-only source cache is [LFDT-way/mcp-cache](https://github.com/LFDT-way/mcp-cache); use only data you are authorized to access and process. An existing local raw tree can be selected with `--raw`.
 
