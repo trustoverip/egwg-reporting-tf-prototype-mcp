@@ -2,7 +2,8 @@ import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { isNormalizedDocument } from './chunks.js'
-import type { NormalizedDocument, SearchResult } from './types.js'
+import { verifyNormalizedSaid } from './said.js'
+import type { NormalizedDocument, SearchResolution } from './types.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -23,24 +24,42 @@ export type DocumentHeader = Omit<NormalizedDocument, 'content'> & {
   content: { content_type: string }
 }
 
-export async function loadDocuments(dir: string): Promise<Map<string, DocumentHeader>> {
-  const documents = new Map<string, DocumentHeader>()
+export interface DocumentLoadState {
+  documents: Map<string, DocumentHeader>
+  invalidIds: Set<string>
+}
+
+/** A corrupt competing copy invalidates the same claimed identifier, too. */
+export async function loadDocumentState(dir: string): Promise<DocumentLoadState> {
+  const state: DocumentLoadState = {
+    documents: new Map<string, DocumentHeader>(),
+    invalidIds: new Set<string>(),
+  }
   let entries: string[]
   try {
     entries = await fs.readdir(dir)
   } catch {
-    return documents
+    return state
   }
 
-  for (const name of entries.filter((entry) => entry.endsWith('.json'))) {
+  for (const name of entries.filter((entry) => entry.endsWith('.json')).sort()) {
     let parsed: unknown
     try {
       parsed = JSON.parse(await fs.readFile(path.join(dir, name), 'utf-8'))
     } catch {
       continue
     }
-    if (!isNormalizedDocument(parsed)) continue
-    documents.set(parsed.identifier, {
+    if (typeof parsed !== 'object' || parsed === null) continue
+    const identifier = 'identifier' in parsed ? parsed.identifier : undefined
+    if (typeof identifier !== 'string' || !identifier) continue
+    if (!isNormalizedDocument(parsed) || !verifyNormalizedSaid(parsed)) {
+      state.invalidIds.add(identifier)
+      state.documents.delete(identifier)
+      console.error(`warning: withholding curated document with invalid schema/SAID: ${name}`)
+      continue
+    }
+    if (state.invalidIds.has(identifier)) continue
+    state.documents.set(identifier, {
       schema_version: parsed.schema_version,
       identifier: parsed.identifier,
       document: parsed.document,
@@ -48,15 +67,26 @@ export async function loadDocuments(dir: string): Promise<Map<string, DocumentHe
       content: { content_type: parsed.content.content_type },
     })
   }
-
-  return documents
+  return state
 }
 
-let cached: Promise<Map<string, DocumentHeader>> | undefined
+export async function loadDocuments(dir: string): Promise<Map<string, DocumentHeader>> {
+  return (await loadDocumentState(dir)).documents
+}
 
-export function documentStore(): Promise<Map<string, DocumentHeader>> {
-  cached ??= loadDocuments(dataDir())
+let cached: Promise<DocumentLoadState> | undefined
+
+function documentState(): Promise<DocumentLoadState> {
+  cached ??= loadDocumentState(dataDir())
   return cached
+}
+
+export async function documentStore(): Promise<Map<string, DocumentHeader>> {
+  return (await documentState()).documents
+}
+
+export async function invalidDocumentIds(): Promise<ReadonlySet<string>> {
+  return (await documentState()).invalidIds
 }
 
 export function organizationalUnits(metadata: Record<string, unknown>): string[] {
@@ -71,9 +101,23 @@ export function organizationalUnits(metadata: Record<string, unknown>): string[]
 export function toSearchResult(
   metadata: Record<string, unknown>,
   score: number,
-  doc: DocumentHeader | undefined
-): SearchResult {
-  return {
+  doc: DocumentHeader | undefined,
+  invalidIds: ReadonlySet<string> = new Set()
+): SearchResolution {
+  const documentId = String(metadata.document_id ?? '')
+  const chunkId = String(metadata.chunk_id ?? '')
+  if (!doc) {
+    return { status: 'unresolved', reason: invalidIds.has(documentId) ? 'invalid_document_said' : 'missing_document', document_id: documentId, chunk_id: chunkId }
+  }
+  if (doc.identifier !== documentId) {
+    return {
+      status: 'unresolved',
+      reason: 'document_identifier_mismatch',
+      document_id: documentId,
+      chunk_id: chunkId,
+    }
+  }
+  return { status: 'resolved', result: {
     schema_version: 1,
     score,
     chunk_id: String(metadata.chunk_id ?? ''),
@@ -89,5 +133,5 @@ export function toSearchResult(
     },
     content_type: String(metadata.content_type ?? ''),
     text: String(metadata.text ?? ''),
-  }
+  } }
 }

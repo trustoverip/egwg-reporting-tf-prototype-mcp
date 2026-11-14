@@ -4,7 +4,9 @@ import { LocalIndex } from 'vectra'
 import { z } from 'zod'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { documentStore, organizationalUnits, toSearchResult } from './documents.js'
+import { documentStore, invalidDocumentIds, toSearchResult } from './documents.js'
+import { summarizeIndexedDocuments } from './document-listing.js'
+import { summarizeResolutions } from './resolution-summary.js'
 import { matchesWg, search } from './search.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -48,23 +50,28 @@ server.tool(
       return { content: [{ type: 'text' as const, text: 'No results found.' }] }
     }
 
-    // Lead with what the query was reduced to and whether anything matched it
-    // lexically. A caller that sees every result matching no terms should
-    // treat the answers as loosely related rather than authoritative.
-    const matchedAny = hits.filter((h) => h.matched_terms.length > 0).length
+    const [documents, invalidIds] = await Promise.all([documentStore(), invalidDocumentIds()])
+
+    const resolved = hits.map((hit) => ({
+      hit,
+      resolution: toSearchResult(
+        hit.metadata, hit.score, documents.get(hit.metadata.document_id as string), invalidIds
+      ),
+    }))
+    const unresolved = resolved.filter((entry) => entry.resolution.status === 'unresolved')
+    const summary = summarizeResolutions(resolved.map(({ hit, resolution }) => ({
+      resolution, matched_terms: hit.matched_terms,
+    })))
     const header = [
       `Query terms: ${query_terms.join(', ') || '(none)'}`,
-      `${matchedAny} of ${hits.length} result(s) contain at least one query term.`,
+      `${summary.matchedCount} of ${summary.resolvedCount} result(s) contain at least one query term.`,
       '',
     ].join('\n')
-
-    const documents = await documentStore()
-
-    const output = hits.map((hit) => {
-      const r = toSearchResult(hit.metadata, hit.score, documents.get(hit.metadata.document_id as string))
-
-      return [
-        `**${r.title || '(document not found in the curated directory)'}** (${r.date})`,
+    const output = resolved.flatMap(({ hit, resolution }) => {
+      if (resolution.status === 'unresolved') return []
+      const r = resolution.result
+      return [[
+        `**${r.title || '(untitled)'}** (${r.date})`,
         `${r.project} | ${r.content_type} | ${r.organizational_unit.join(', ')}`,
         `Source: ${r.source.system} ${r.source.identifier}${r.source.url ? ` — ${r.source.url}` : ''}`,
         `Document: ${r.document_id}`,
@@ -75,11 +82,18 @@ server.tool(
         ``,
         r.text,
         `---`,
-      ].join('\n')
+      ].join('\n')]
     })
 
+    const warning = unresolved.length
+      ? 'Retrieval integrity: ' + unresolved.length +
+        ' hit(s) withheld due to unresolved document joins (' +
+        unresolved.map(({ resolution }) => resolution.status === 'unresolved'
+          ? resolution.reason + ': ' + resolution.document_id : '').join('; ') + ').\n\n'
+      : ''
     return {
-      content: [{ type: 'text' as const, text: header + output.join('\n') }],
+      content: [{ type: 'text' as const, text: warning + header + (output.join('\n') || 'No provenance-resolved results.') }],
+      ...(output.length === 0 && unresolved.length > 0 ? { isError: true } : {}),
     }
   }
 )
@@ -118,26 +132,10 @@ server.tool(
       }
     }
 
-    interface Doc {
-      title: string
-      date: string
-      content_type: string
-      units: string[]
-    }
-
-    const documents = await documentStore()
-    const docs = new Map<string, Doc>()
-    for (const item of await index.listItems()) {
-      const m = item.metadata as Record<string, string | number>
-      const id = m.document_id as string
-      if (docs.has(id)) continue
-      docs.set(id, {
-        title: documents.get(id)?.document.title ?? '(document not found in the curated directory)',
-        date: String(m.date ?? ''),
-        content_type: String(m.content_type ?? ''),
-        units: organizationalUnits(m),
-      })
-    }
+    const [documents, invalidIds] = await Promise.all([documentStore(), invalidDocumentIds()])
+    const { docs, withheldIds, allWithheld } = summarizeIndexedDocuments(
+      await index.listItems(), documents
+    )
 
     const wantedType = content_type?.toLowerCase()
     const matching = [...docs.values()]
@@ -152,6 +150,7 @@ server.tool(
       ...(content_type ? [`content type "${content_type}"`] : []),
     ]
     const header = [
+      ...(withheldIds.size ? [`Retrieval integrity: ${withheldIds.size} indexed document(s) withheld (${invalidIds.size} invalid document identifier(s) observed in curated files).`] : []),
       `${matching.length} of ${docs.size} documents` +
         (filters.length ? ` match ${filters.join(' and ')}` : ''),
       page.length
@@ -169,6 +168,7 @@ server.tool(
 
     return {
       content: [{ type: 'text' as const, text: header + lines.join('\n') }],
+      ...(allWithheld ? { isError: true } : {}),
     }
   }
 )

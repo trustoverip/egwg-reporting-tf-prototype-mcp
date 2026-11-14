@@ -13,6 +13,8 @@ import {
 } from '../src/chunks.js'
 import { loadDocuments, organizationalUnits, toSearchResult } from '../src/documents.js'
 import type { NormalizedDocument } from '../src/types.js'
+import { summarizeResolutions } from '../src/resolution-summary.js'
+import { summarizeIndexedDocuments } from '../src/document-listing.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const examplePath = path.join(
@@ -107,6 +109,8 @@ test('search results join the chunk to its document', async () => {
     const result = toSearchResult(chunkMetadata(chunk), 0.5, documents.get(doc.identifier))
 
     assert.deepEqual(result, {
+      status: 'resolved',
+      result: {
       schema_version: 1,
       score: 0.5,
       chunk_id: chunk.chunk_id,
@@ -122,18 +126,97 @@ test('search results join the chunk to its document', async () => {
       },
       content_type: doc.content.content_type,
       text: chunk.text,
+      },
     })
   } finally {
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
 
-test('a chunk whose document is missing still returns its own fields', async () => {
+test('missing document is not represented as a resolved search result', async () => {
   const [chunk] = toEmbeddedChunks(await example())
-  const result = toSearchResult(chunkMetadata(chunk), 0.1, undefined)
+  assert.deepEqual(toSearchResult(chunkMetadata(chunk), 0.1, undefined), {
+    status: 'unresolved',
+    reason: 'missing_document',
+    chunk_id: chunk.chunk_id,
+    document_id: chunk.document_id,
+  })
+})
 
-  assert.equal(result.chunk_id, chunk.chunk_id)
-  assert.equal(result.text, chunk.text)
-  assert.equal(result.title, '')
-  assert.deepEqual(result.source, { system: '', identifier: '', url: '' })
+test('inconsistent document identity is rejected rather than decorated with incorrect provenance', async () => {
+  const doc = await example()
+  const [chunk] = toEmbeddedChunks(doc)
+  const mismatch = { ...doc, identifier: 'urn:said:another-document' }
+  assert.deepEqual(toSearchResult(chunkMetadata(chunk), 0.1, mismatch), {
+    status: 'unresolved',
+    reason: 'document_identifier_mismatch',
+    chunk_id: chunk.chunk_id,
+    document_id: chunk.document_id,
+  })
+})
+
+test('retrieval summaries count only resolved hits and their lexical matches', async () => {
+  const doc = await example()
+  const [chunk] = toEmbeddedChunks(doc)
+  const metadata = chunkMetadata(chunk)
+  const resolved = toSearchResult(metadata, 0.6, doc)
+  const missing = toSearchResult(metadata, 0.6, undefined)
+  const summary = summarizeResolutions([
+    { resolution: resolved, matched_terms: [] },
+    { resolution: resolved, matched_terms: ['trust'] },
+    { resolution: missing, matched_terms: ['trust'] },
+  ])
+  assert.deepEqual(summary, { resolvedCount: 2, matchedCount: 1, unresolvedCount: 1, exitCode: 0 })
+})
+
+test('all-unresolved retrieval fails in both output modes; ordinary empty search does not', async () => {
+  const [chunk] = toEmbeddedChunks(await example())
+  const missing = toSearchResult(chunkMetadata(chunk), 0.6, undefined)
+  assert.deepEqual(summarizeResolutions([
+    { resolution: missing, matched_terms: ['trust'] },
+  ]), { resolvedCount: 0, matchedCount: 0, unresolvedCount: 1, exitCode: 1 })
+  assert.deepEqual(summarizeResolutions([]),
+    { resolvedCount: 0, matchedCount: 0, unresolvedCount: 0, exitCode: 0 })
+})
+
+test('list_documents counts withheld documents rather than indexed chunks', async () => {
+  const doc = await example()
+  const available = new Map([[doc.identifier, {
+    schema_version: doc.schema_version,
+    identifier: doc.identifier,
+    document: doc.document,
+    provenance: doc.provenance,
+    content: { content_type: doc.content.content_type },
+  }]])
+  const valid = { metadata: {
+    document_id: doc.identifier, date: doc.document.date,
+    content_type: doc.content.content_type,
+    organizational_unit: JSON.stringify(doc.document.organizational_unit),
+  } }
+  const missing = { metadata: {
+    ...valid.metadata, document_id: 'missing-document',
+  } }
+  const indexed = [valid, valid, missing, missing, missing, missing]
+  const mixed = summarizeIndexedDocuments(indexed, available)
+  assert.equal(mixed.docs.size, 1)
+  assert.deepEqual([...mixed.withheldIds], ['missing-document'])
+  assert.equal(mixed.allWithheld, false)
+  assert.equal(mixed.docs.get(doc.identifier)?.title, doc.document.title)
+  assert.equal(mixed.docs.get(doc.identifier)?.date, doc.document.date)
+
+  const withheldOnly = summarizeIndexedDocuments([missing, missing, missing, missing], available)
+  assert.equal(withheldOnly.docs.size, 0)
+  assert.equal(withheldOnly.withheldIds.size, 1)
+  assert.equal(withheldOnly.allWithheld, true)
+
+  const emptyIndex = summarizeIndexedDocuments([], available)
+  assert.equal(emptyIndex.docs.size, 0)
+  assert.equal(emptyIndex.withheldIds.size, 0)
+  assert.equal(emptyIndex.allWithheld, false)
+
+  const validOnly = summarizeIndexedDocuments([valid], available)
+  assert.equal(validOnly.allWithheld, false)
+  // Filtering is applied after integrity classification, so a filter with
+  // no matching valid documents is not an integrity error.
+  assert.equal([...validOnly.docs.values()].filter(d => d.content_type === 'nonexistent').length, 0)
 })
