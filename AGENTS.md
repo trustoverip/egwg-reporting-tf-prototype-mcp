@@ -186,6 +186,12 @@ Each workstream owns specific models and is responsible only for the transformat
 The models below will be the architectural source of truth for information flowing through the platform.
 Currently this is under development in https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/issues/8
 
+The examples below describe the implemented schema_version 1 baseline. The proposed
+schema_version 2 contract and migration requirements are described in
+[docs/provenance-contract.md](docs/provenance-contract.md). Schema v2 is not
+implemented or authoritative for runtime consumers until its producer and MCP
+consumer migration PRs have been accepted and integrated.
+
 ---
 
 ## Raw Artifact
