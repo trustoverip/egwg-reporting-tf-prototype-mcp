@@ -14,7 +14,7 @@ A prototype for retrieving organizational knowledge through the Model Context Pr
 | Retrieval | Local MCP `search` and `list_documents` tools; CLI query path | Search combines semantic and keyword ranking. The server joins indexed chunks to curated documents at retrieval time. |
 | Tests | Python document-identity and normalization tests; TypeScript handoff tests; CI document-identity workflow | Component checks are not an end-to-end acceptance result or an independent real-corpus relevance assessment. |
 
-**Scope:** The implementation supports current-state retrieval. It does not provide historical as-of or bitemporal queries. Temporal identity, observation history and retention limitations are being assessed in [PR #29](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/29), which is proposed work rather than a merged capability.
+**Scope:** The implementation supports current-state retrieval. It does not provide historical as-of or bitemporal queries. The proposed [temporal lifecycle assessment](docs/temporal-lifecycle.md) ([PR #29](https://github.com/trustoverip/egwg-reporting-tf-prototype-mcp/pull/29)) describes document identity, observation timestamps, supersession and retention boundaries, without claiming a merged historical-query capability.
 
 ## How it fits together
 
