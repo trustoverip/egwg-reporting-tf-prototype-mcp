@@ -1,0 +1,24 @@
+name: Retrieval evaluation
+
+on:
+  push:
+    branches: [main, assurance/retrieval-evidence-evaluation]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Test evaluator and evidence semantics
+        run: node --test evaluation/evaluate.test.mjs
+      - name: Check synthetic fixture output
+        run: node evaluation/evaluate.mjs evaluation/example-cases.json evaluation/example-results.json 5 > /tmp/evaluation-report.json
