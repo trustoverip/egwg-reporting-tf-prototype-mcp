@@ -1,0 +1,21 @@
+[
+  {
+    "id": "synthetic-provenance",
+    "hits": [
+      {
+        "metadata": {
+          "doc_id": "synthetic-meeting-1",
+          "identifier": "urn:said:synthetic-1",
+          "source_system": "Zoom"
+        }
+      },
+      {
+        "metadata": {
+          "doc_id": "synthetic-meeting-2",
+          "identifier": "urn:said:synthetic-2",
+          "source_system": "Zoom"
+        }
+      }
+    ]
+  }
+]
